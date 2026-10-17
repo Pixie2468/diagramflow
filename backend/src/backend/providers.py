@@ -1,26 +1,30 @@
 """Diagram extraction providers; only this module knows about model SDKs."""
 
-import json
+import base64
 from os import getenv
 from typing import Protocol
 
+import httpx
 from google import genai
 from google.genai import types
+from pydantic import ValidationError
 
 from .compiler import compile_mermaid
 from .models import Confidence, DiagramExtraction, DiagramGraph, GraphEdge, GraphNode, ShapeType
 
-PROMPT = """Analyze this whiteboard or hand-drawn flowchart. First inventory every readable
-shape and its text, then trace directed connections. Return only the requested graph JSON.
-Use bounding_box coordinates normalized from 0 to 1000 when a node location is visible.
-For unclear arrow endpoints, select the most likely target, mark confidence as low, and list
-other plausible target IDs in alternatives. Never invent nodes or edges not visible in the image."""
+PROMPT = """Read this flowchart. Return JSON only, without Markdown or explanation:
+{"direction":"TD","nodes":[{"id":"safe_identifier","label":"visible text","shape_type":"rectangle|rounded|diamond|cylinder"}],"edges":[{"source":"node_id","target":"node_id","label":"optional text","confidence":"high|low","alternatives":["other_node_id"]}]}
+Use only visible nodes and arrows. Return at most 12 meaningful nodes and 16 edges; ignore decorative lines and duplicate labels. Keep each label under 40 characters. Use low confidence and alternatives only for an unclear arrow endpoint. Use empty arrays when there are none."""
 
 
 class DiagramProvider(Protocol):
     name: str
 
-    def extract(self, image: bytes, mime_type: str) -> DiagramExtraction: ...
+    async def extract(self, image: bytes, mime_type: str) -> DiagramExtraction: ...
+
+
+class ProviderError(RuntimeError):
+    """A safe, provider-neutral error suitable for returning as a 502."""
 
 
 class MockDiagramProvider:
@@ -28,7 +32,7 @@ class MockDiagramProvider:
 
     name = "mock"
 
-    def extract(self, image: bytes, mime_type: str) -> DiagramExtraction:
+    async def extract(self, image: bytes, mime_type: str) -> DiagramExtraction:
         graph = DiagramGraph(
             nodes=[
                 GraphNode(id="start", label="Start", shape_type=ShapeType.ROUNDED),
@@ -48,30 +52,95 @@ class MockDiagramProvider:
 class GeminiDiagramProvider:
     name = "gemini"
 
-    def __init__(self, api_key: str, model: str) -> None:
-        self.client = genai.Client(api_key=api_key)
+    def __init__(self, api_key: str, model: str, client: Any | None = None) -> None:
+        self.client = client or genai.Client(api_key=api_key)
         self.model = model
 
-    def extract(self, image: bytes, mime_type: str) -> DiagramExtraction:
-        response = self.client.models.generate_content(
-            model=self.model,
-            contents=[types.Part.from_bytes(data=image, mime_type=mime_type), PROMPT],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=DiagramGraph,
-                temperature=0,
-            ),
-        )
-        parsed = response.parsed
-        if parsed is None:
-            raise RuntimeError("Gemini returned no structured graph.")
-        graph = DiagramGraph.model_validate(parsed if isinstance(parsed, dict) else json.loads(parsed.model_dump_json()))
+    async def extract(self, image: bytes, mime_type: str) -> DiagramExtraction:
+        try:
+            response = await self.client.aio.models.generate_content(
+                model=self.model,
+                contents=[types.Part.from_bytes(data=image, mime_type=mime_type), PROMPT],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0,
+                ),
+            )
+        except Exception as exc:
+            raise ProviderError("Gemini request failed.") from exc
+
+        try:
+            response_text = response.text
+            if not response_text:
+                raise ValueError("Gemini returned no structured graph.")
+            graph = DiagramGraph.model_validate_json(response_text)
+        except (TypeError, ValueError, ValidationError) as exc:
+            raise ProviderError("Gemini returned an invalid graph.") from exc
+        return DiagramExtraction(graph=graph, mermaid=compile_mermaid(graph), provider=self.name)
+
+
+class OpenRouterDiagramProvider:
+    """OpenRouter-backed vision extraction using its OpenAI-compatible API."""
+
+    name = "openrouter"
+
+    def __init__(self, api_key: str, model: str, client: httpx.AsyncClient | None = None) -> None:
+        self.api_key = api_key
+        self.model = model
+        self.client = client
+
+    async def extract(self, image: bytes, mime_type: str) -> DiagramExtraction:
+        request_client = self.client or httpx.AsyncClient(timeout=55)
+        try:
+            response = await request_client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                    "X-Title": "DiagramFlow",
+                },
+                json={
+                    "model": self.model,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": PROMPT},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:{mime_type};base64,{base64.b64encode(image).decode('ascii')}"
+                                    },
+                                },
+                            ],
+                        }
+                    ],
+                    "response_format": {"type": "json_object"},
+                    "temperature": 0,
+                    "max_tokens": 1024,
+                },
+            )
+            response.raise_for_status()
+            content = response.json()["choices"][0]["message"]["content"]
+            graph = DiagramGraph.model_validate_json(content)
+        except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError, ValidationError) as exc:
+            raise ProviderError("OpenRouter request failed or returned an invalid graph.") from exc
+        finally:
+            if self.client is None:
+                await request_client.aclose()
         return DiagramExtraction(graph=graph, mermaid=compile_mermaid(graph), provider=self.name)
 
 
 def get_provider() -> DiagramProvider:
-    """Choose live Gemini only when its credential is deliberately configured."""
-    api_key = getenv("GEMINI_API_KEY")
-    if not api_key:
+    """Select the configured live provider, with mock mode as the no-key default."""
+    provider_name = getenv("DIAGRAM_PROVIDER", "gemini").lower()
+    if provider_name == "openrouter":
+        api_key = getenv("OPENROUTER_API_KEY")
+        if api_key:
+            return OpenRouterDiagramProvider(api_key, getenv("OPENROUTER_MODEL", "google/gemma-4-31b-it"))
         return MockDiagramProvider()
-    return GeminiDiagramProvider(api_key, getenv("GEMINI_MODEL", "gemma-4-26b-a4b-it"))
+
+    api_key = getenv("GEMINI_API_KEY")
+    if api_key:
+        return GeminiDiagramProvider(api_key, getenv("GEMINI_MODEL", "gemma-4-26b-a4b-it"))
+    return MockDiagramProvider()
