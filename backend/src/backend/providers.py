@@ -12,9 +12,21 @@ from pydantic import ValidationError
 from .compiler import compile_mermaid
 from .models import Confidence, DiagramExtraction, DiagramGraph, GraphEdge, GraphNode, ShapeType
 
-PROMPT = """Read this flowchart. Return JSON only, without Markdown or explanation:
-{"direction":"TD","nodes":[{"id":"safe_identifier","label":"visible text","shape_type":"rectangle|rounded|diamond|cylinder"}],"edges":[{"source":"node_id","target":"node_id","label":"optional text","confidence":"high|low","alternatives":["other_node_id"]}]}
-Use only visible nodes and arrows. Return at most 12 meaningful nodes and 16 edges; ignore decorative lines and duplicate labels. Keep each label under 40 characters. Use low confidence and alternatives only for an unclear arrow endpoint. Use empty arrays when there are none."""
+PROMPT = """Analyze this diagram image and detect its type. Return strictly JSON adhering to one of these formats, with no Markdown or extra text:
+
+1. FLOWCHART or ARCHITECTURE:
+{"diagram_type":"flowchart","direction":"TD","nodes":[{"id":"node_id","label":"visible text","shape_type":"rectangle|rounded|diamond|cylinder|circle|hexagon"}],"edges":[{"source":"node_id","target":"node_id","label":"optional","style":"solid|dashed|thick|bidirectional","confidence":"high|low","alternatives":["alt_id"]}],"subgraphs":[{"id":"group_id","label":"group title","node_ids":["node_id"]}]}
+
+2. SEQUENCE DIAGRAM (actors/lifelines & sequential message arrows):
+{"diagram_type":"sequence","autonumber":true,"participants":[{"id":"part_id","label":"visible text"}],"messages":[{"source":"part_id","target":"part_id","label":"call or response","style":"solid|dashed|bidirectional","confidence":"high|low","alternatives":["alt_id"]}]}
+
+3. ENTITY-RELATIONSHIP (ER) DIAGRAM (database entities & relationships):
+{"diagram_type":"er","entities":[{"id":"entity_name","attributes":[{"name":"col_name","type":"string|int|uuid","is_key":false}]}],"relationships":[{"source":"entity_name","target":"entity_name","cardinality":"1:1|1:N|0:N|M:N","label":"verb phrase","confidence":"high|low","alternatives":["alt_id"]}]}
+
+4. CLASS DIAGRAM (UML classes, methods/fields & relations):
+{"diagram_type":"class","classes":[{"id":"class_name","attributes":["attr: type"],"methods":["method()"]}],"relationships":[{"source":"class_name","target":"class_name","relation_type":"inheritance|composition|aggregation|association|dependency","label":"optional","confidence":"high|low","alternatives":["alt_id"]}]}
+
+Use valid identifiers for ids. Use low confidence and alternatives only for ambiguous lines. Return valid JSON only."""
 
 
 class DiagramProvider(Protocol):
@@ -117,7 +129,7 @@ class OpenRouterDiagramProvider:
                     ],
                     "response_format": {"type": "json_object"},
                     "temperature": 0,
-                    "max_tokens": 1024,
+                    "max_tokens": 2048,
                 },
             )
             response.raise_for_status()

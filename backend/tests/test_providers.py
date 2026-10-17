@@ -136,6 +136,40 @@ class OpenRouterDiagramProviderTests(unittest.TestCase):
         expected_url = f"data:image/png;base64,{base64.b64encode(test_bytes).decode('ascii')}"
         self.assertEqual(user_message["content"][1]["image_url"]["url"], expected_url)
 
+    def test_extract_sequence_diagram_from_openrouter(self) -> None:
+        def handler(_: httpx.Request) -> httpx.Response:
+            response_data = {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps({
+                                "diagram_type": "sequence",
+                                "autonumber": True,
+                                "participants": [
+                                    {"id": "client", "label": "Client"},
+                                    {"id": "server", "label": "Server"},
+                                ],
+                                "messages": [
+                                    {"source": "client", "target": "server", "label": "GET /data", "style": "solid"},
+                                    {"source": "server", "target": "client", "label": "200 JSON", "style": "dashed"},
+                                ],
+                            })
+                        }
+                    }
+                ]
+            }
+            return httpx.Response(200, json=response_data)
+
+        client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+        provider = OpenRouterDiagramProvider(api_key="test-key", model="test-model", client=client)
+        result = asyncio.run(provider.extract(b"bytes", "image/png"))
+
+        self.assertEqual(result.provider, "openrouter")
+        self.assertEqual(result.graph.diagram_type, "sequence")
+        self.assertTrue(result.mermaid.startswith("sequenceDiagram"))
+        self.assertIn("client->>server: GET /data", result.mermaid)
+        self.assertIn("server-->>client: 200 JSON", result.mermaid)
+
     def test_extract_raises_provider_error_on_http_failure(self) -> None:
         def handler(_: httpx.Request) -> httpx.Response:
             return httpx.Response(500, text="Internal Server Error")

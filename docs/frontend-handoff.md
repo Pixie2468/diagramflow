@@ -33,9 +33,11 @@ For local Vite use `VITE_API_BASE_URL=http://localhost:8000`.
 
 ```ts
 type Confidence = "high" | "low";
-type ShapeType = "rectangle" | "rounded" | "diamond" | "cylinder";
+type ShapeType = "rectangle" | "rounded" | "diamond" | "cylinder" | "circle" | "hexagon";
+type EdgeStyle = "solid" | "dashed" | "thick" | "bidirectional";
 
-type DiagramGraph = {
+type FlowchartGraph = {
+  diagram_type: "flowchart";
   direction: "TD" | "LR" | "BT" | "RL";
   nodes: Array<{
     id: string;
@@ -47,15 +49,70 @@ type DiagramGraph = {
     source: string;
     target: string;
     label?: string;
+    style?: EdgeStyle;
+    confidence: Confidence;
+    alternatives: string[];
+  }>;
+  subgraphs?: Array<{
+    id: string;
+    label: string;
+    node_ids: string[];
+  }>;
+};
+
+type SequenceGraph = {
+  diagram_type: "sequence";
+  autonumber: boolean;
+  participants: Array<{ id: string; label: string }>;
+  messages: Array<{
+    source: string;
+    target: string;
+    label: string;
+    style: "solid" | "dashed" | "bidirectional";
     confidence: Confidence;
     alternatives: string[];
   }>;
 };
 
+type ERGraph = {
+  diagram_type: "er";
+  entities: Array<{
+    id: string;
+    attributes: Array<{ name: string; type: string; is_key?: boolean }>;
+  }>;
+  relationships: Array<{
+    source: string;
+    target: string;
+    cardinality: "1:1" | "1:N" | "0:N" | "M:N";
+    label: string;
+    confidence: Confidence;
+    alternatives: string[];
+  }>;
+};
+
+type ClassGraph = {
+  diagram_type: "class";
+  classes: Array<{
+    id: string;
+    attributes: string[];
+    methods: string[];
+  }>;
+  relationships: Array<{
+    source: string;
+    target: string;
+    relation_type: "inheritance" | "composition" | "aggregation" | "association" | "dependency";
+    label?: string;
+    confidence: Confidence;
+    alternatives: string[];
+  }>;
+};
+
+type DiagramGraph = FlowchartGraph | SequenceGraph | ERGraph | ClassGraph;
+
 type DiagramExtraction = {
   graph: DiagramGraph;
   mermaid: string;
-  provider: "mock" | "gemini";
+  provider: "mock" | "gemini" | "openrouter";
 };
 ```
 

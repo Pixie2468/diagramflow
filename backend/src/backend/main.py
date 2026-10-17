@@ -1,6 +1,5 @@
 """FastAPI entrypoint for DiagramFlow's stateless extraction API."""
 
-from os import getenv
 from pathlib import Path
 from typing import Annotated, Callable
 
@@ -15,12 +14,13 @@ from .providers import DiagramProvider, ProviderError, get_provider
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 
-def create_app(provider_factory: Callable[[], DiagramProvider] = get_provider) -> FastAPI:
+def create_app(
+    provider_factory: Callable[[], DiagramProvider] = get_provider,
+) -> FastAPI:
     app = FastAPI(title="DiagramFlow API", version="0.1.0")
-    origins = [origin.strip() for origin in getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if origin.strip()]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=origins,
+        allow_origins=["*"],
         allow_credentials=False,
         allow_methods=["POST"],
         allow_headers=["Content-Type"],
@@ -30,8 +30,14 @@ def create_app(provider_factory: Callable[[], DiagramProvider] = get_provider) -
     def healthcheck() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.post("/v1/diagrams:extract", response_model=DiagramExtraction, tags=["diagrams"])
-    async def extract_diagram(image: Annotated[UploadFile, File(description="PNG, JPEG, or WebP whiteboard image")]) -> DiagramExtraction:
+    @app.post(
+        "/v1/diagrams:extract", response_model=DiagramExtraction, tags=["diagrams"]
+    )
+    async def extract_diagram(
+        image: Annotated[
+            UploadFile, File(description="PNG, JPEG, or WebP whiteboard image")
+        ],
+    ) -> DiagramExtraction:
         raw_image = await image.read(MAX_IMAGE_BYTES + 1)
         await image.close()
         prepared_image, mime_type = prepare_image(raw_image, image.content_type)

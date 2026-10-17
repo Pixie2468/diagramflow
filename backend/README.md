@@ -29,11 +29,16 @@ uv run --directory backend uvicorn backend.main:app --reload
 
 ## API
 
-`POST /v1/diagrams:extract` accepts multipart field `image` (`image/png`, `image/jpeg`, or `image/webp`, maximum 10 MB) and returns:
+`POST /v1/diagrams:extract` accepts multipart field `image` (`image/png`, `image/jpeg`, or `image/webp`, maximum 10 MB). The model detects the diagram type and returns a validated discriminated union:
+
+* **Flowchart & System Architecture** (`flowchart TD|LR`): Nodes (6 shapes: rectangle, rounded, diamond, cylinder, circle, hexagon), styled edges (`solid`, `dashed`, `thick`, `bidirectional`), and `subgraphs` (clusters/VPCs).
+* **Sequence Diagram** (`sequenceDiagram`): Participants, message calls and returns (`solid`, `dashed`, `bidirectional`), and autonumbering.
+* **Entity-Relationship Diagram** (`erDiagram`): Entities, typed attributes, primary/foreign keys (`PK`/`FK`), and cardinalities (`1:1`, `1:N`, `0:N`, `M:N`).
+* **Class Diagram** (`classDiagram`): Classes with attributes and methods, plus relations (`inheritance`, `composition`, `aggregation`, `association`, `dependency`).
 
 ```json
 {
-  "graph": { "direction": "TD", "nodes": [], "edges": [] },
+  "graph": { "diagram_type": "flowchart", "direction": "TD", "nodes": [], "edges": [] },
   "mermaid": "flowchart TD",
   "provider": "mock"
 }
