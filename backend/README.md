@@ -4,8 +4,17 @@ Stateless FastAPI service for turning a whiteboard image into validated graph JS
 
 ## Run
 
+Using standard FastAPI CLI (auto-detects default entrypoint):
+
 ```bash
-uv run --directory backend uvicorn backend.main:app --reload
+# From within backend/ or the repository root:
+fastapi dev
+
+# Or with uvicorn:
+uvicorn main:app --reload
+
+# Or with uv:
+uv run --directory backend uvicorn main:app --reload
 ```
 
 Without `GEMINI_API_KEY`, the API uses its deterministic mock provider so the frontend can be built immediately. With a key in either the process environment or `backend/.env`, each request sends the contrast-enhanced image to the Gemini API using the configured Gemma 4 model and requires structured `DiagramGraph` JSON.
