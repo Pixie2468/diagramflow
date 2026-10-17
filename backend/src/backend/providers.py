@@ -1,8 +1,11 @@
 """Diagram extraction providers; only this module knows about model SDKs."""
 
 import base64
+import json
+import logging
 from os import getenv
-from typing import Protocol
+import re
+from typing import Any, Protocol
 
 import httpx
 from google import genai
@@ -10,11 +13,13 @@ from google.genai import types
 from pydantic import ValidationError
 
 from .compiler import compile_mermaid
-from .models import Confidence, DiagramExtraction, DiagramGraph, GraphEdge, GraphNode, ShapeType
+from .models import AnyDiagramGraph, Confidence, DiagramExtraction, DiagramGraph, GraphEdge, GraphNode, ShapeType
+
+logger = logging.getLogger("diagramflow.providers")
 
 PROMPT = """Analyze this diagram image and detect its type. Return strictly JSON adhering to one of these formats, with no Markdown or extra text:
 
-1. FLOWCHART or ARCHITECTURE:
+1. FLOWCHART or ARCHITECTURE (use "diagram_type":"flowchart"):
 {"diagram_type":"flowchart","direction":"TD","nodes":[{"id":"node_id","label":"visible text","shape_type":"rectangle|rounded|diamond|cylinder|circle|hexagon"}],"edges":[{"source":"node_id","target":"node_id","label":"optional","style":"solid|dashed|thick|bidirectional","confidence":"high|low","alternatives":["alt_id"]}],"subgraphs":[{"id":"group_id","label":"group title","node_ids":["node_id"]}]}
 
 2. SEQUENCE DIAGRAM (actors/lifelines & sequential message arrows):
@@ -68,6 +73,62 @@ class GeminiDiagramProvider:
         self.client = client or genai.Client(api_key=api_key)
         self.model = model
 
+def _parse_and_validate_graph(content: str) -> AnyDiagramGraph:
+    cleaned = content.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+        cleaned = cleaned.strip()
+
+    data = json.loads(cleaned)
+
+    if isinstance(data, dict):
+        dtype = data.get("diagram_type", "flowchart")
+        if dtype in ("flowchart", "architecture"):
+            nodes = data.get("nodes")
+            if isinstance(nodes, list):
+                node_ids = set()
+                for node in nodes:
+                    if isinstance(node, dict) and "id" in node:
+                        node_ids.add(node["id"])
+                        lbl = (node.get("label") or "").replace("\x00", "").strip()
+                        node["label"] = lbl if lbl else " "
+
+                edges = data.get("edges")
+                if isinstance(edges, list):
+                    for edge in edges:
+                        if isinstance(edge, dict):
+                            src = edge.get("source")
+                            tgt = edge.get("target")
+                            if src and src not in node_ids:
+                                nodes.append({"id": src, "label": src, "shape_type": "rectangle"})
+                                node_ids.add(src)
+                            if tgt and tgt not in node_ids:
+                                nodes.append({"id": tgt, "label": tgt, "shape_type": "rectangle"})
+                                node_ids.add(tgt)
+                            alts = edge.get("alternatives")
+                            if isinstance(alts, list):
+                                edge["alternatives"] = [a for a in alts if a != tgt and a in node_ids]
+                            if edge.get("confidence") == "high" and edge.get("alternatives"):
+                                edge["confidence"] = "low"
+
+                subgraphs = data.get("subgraphs")
+                if isinstance(subgraphs, list):
+                    for sg in subgraphs:
+                        if isinstance(sg, dict):
+                            sg_nodes = sg.get("node_ids", [])
+                            sg["node_ids"] = [nid for nid in sg_nodes if nid in node_ids]
+
+    return DiagramGraph.model_validate(data)
+
+
+class GeminiDiagramProvider:
+    name = "gemini"
+
+    def __init__(self, api_key: str, model: str, client: Any | None = None) -> None:
+        self.client = client or genai.Client(api_key=api_key)
+        self.model = model
+
     async def extract(self, image: bytes, mime_type: str) -> DiagramExtraction:
         try:
             response = await self.client.aio.models.generate_content(
@@ -85,8 +146,9 @@ class GeminiDiagramProvider:
             response_text = response.text
             if not response_text:
                 raise ValueError("Gemini returned no structured graph.")
-            graph = DiagramGraph.model_validate_json(response_text)
+            graph = _parse_and_validate_graph(response_text)
         except (TypeError, ValueError, ValidationError) as exc:
+            logger.warning("Gemini extraction parsing failed: %s", exc)
             raise ProviderError("Gemini returned an invalid graph.") from exc
         return DiagramExtraction(graph=graph, mermaid=compile_mermaid(graph), provider=self.name)
 
@@ -102,7 +164,7 @@ class OpenRouterDiagramProvider:
         self.client = client
 
     async def extract(self, image: bytes, mime_type: str) -> DiagramExtraction:
-        request_client = self.client or httpx.AsyncClient(timeout=55)
+        request_client = self.client or httpx.AsyncClient(timeout=120.0)
         try:
             response = await request_client.post(
                 "https://openrouter.ai/api/v1/chat/completions",
@@ -129,13 +191,14 @@ class OpenRouterDiagramProvider:
                     ],
                     "response_format": {"type": "json_object"},
                     "temperature": 0,
-                    "max_tokens": 2048,
+                    "max_tokens": 4096,
                 },
             )
             response.raise_for_status()
             content = response.json()["choices"][0]["message"]["content"]
-            graph = DiagramGraph.model_validate_json(content)
+            graph = _parse_and_validate_graph(content)
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError, ValidationError) as exc:
+            logger.warning("OpenRouter extraction parsing/request failed: %s", exc)
             raise ProviderError("OpenRouter request failed or returned an invalid graph.") from exc
         finally:
             if self.client is None:

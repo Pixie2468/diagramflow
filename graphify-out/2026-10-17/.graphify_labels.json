@@ -1,0 +1,21 @@
+{
+  "0": "Mermaid Compiler & Graph Models",
+  "1": "Frontend Package Dependencies",
+  "2": "Image Processing & App Routes",
+  "3": "Architecture ADRs & Domain Specs",
+  "5": "Frontend App TypeScript Config",
+  "6": "OpenRouter Vision Provider",
+  "7": "Node TypeScript Config",
+  "8": "Mock Provider & API Tests",
+  "9": "Backend Server Entrypoints",
+  "11": "SVG Icons & Social Assets",
+  "12": "Oxlint Linter Configuration",
+  "13": "Frontend Brand & Static Assets",
+  "14": "TypeScript Solution Config",
+  "15": "Root Module Entrypoint",
+  "16": "Frontend Setup & Index",
+  "17": "Google GenAI Dependency",
+  "18": "Diagram Subgraph Specification",
+  "19": "Frontend Oxlint Config",
+  "20": "Backend Package Root"
+}

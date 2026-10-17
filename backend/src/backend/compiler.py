@@ -16,7 +16,8 @@ from .models import (
 
 
 def _escape_label(value: str) -> str:
-    return value.replace("&", "&amp;").replace('"', "&quot;").replace("\n", "<br/>")
+    cleaned = value.replace("\x00", "").replace("&", "&amp;").replace('"', "&quot;").replace("\n", "<br/>").strip()
+    return cleaned if cleaned else " "
 
 
 def _render_node(node: GraphNode) -> str:

@@ -11,6 +11,9 @@ from .image_processing import MAX_IMAGE_BYTES, prepare_image
 from .models import DiagramExtraction
 from .providers import DiagramProvider, ProviderError, get_provider
 
+import logging
+
+logger = logging.getLogger("diagramflow")
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 
@@ -44,6 +47,7 @@ def create_app(
         try:
             return await provider_factory().extract(prepared_image, mime_type)
         except ProviderError as exc:
+            logger.exception("Diagram provider extraction failed: %s", exc)
             raise HTTPException(
                 status.HTTP_502_BAD_GATEWAY,
                 "The diagram provider could not process this image. Please try again.",

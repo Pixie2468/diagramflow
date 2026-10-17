@@ -177,3 +177,14 @@ class MermaidCompilerTests(unittest.TestCase):
                 entities=[EREntity(id="USER")],
                 relationships=[ERRelationship(source="USER", target="UNKNOWN", label="relates")],
             )
+
+    def test_supports_architecture_diagram_type_and_aliases(self) -> None:
+        raw_json = (
+            '{"diagram_type":"architecture","direction":"TD",'
+            '"nodes":[{"id":"lb","label":"Load Balancer","shape_type":"rectangle"}],'
+            '"edges":[]}'
+        )
+        graph = DiagramGraph.model_validate_json(raw_json)
+        self.assertIsInstance(graph, FlowchartGraph)
+        self.assertEqual(compile_mermaid(graph), 'flowchart TD\n    lb["Load Balancer"]')
+

@@ -48,7 +48,7 @@ class GraphNode(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(pattern=r"^[A-Za-z][A-Za-z0-9_]*$")
-    label: str = Field(min_length=1, max_length=200)
+    label: str = Field(default="", max_length=200)
     shape_type: ShapeType = ShapeType.RECTANGLE
     bounding_box: BoundingBox | None = None
 
@@ -77,7 +77,7 @@ class FlowchartGraph(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    diagram_type: Literal["flowchart"] = "flowchart"
+    diagram_type: Literal["flowchart", "architecture"] = "flowchart"
     direction: str = Field(default="TD", pattern=r"^(TD|LR|BT|RL)$")
     nodes: list[GraphNode] = Field(min_length=1, max_length=100)
     edges: list[GraphEdge] = Field(default_factory=list, max_length=200)
@@ -133,7 +133,7 @@ class SequenceMessage(BaseModel):
 class SequenceGraph(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    diagram_type: Literal["sequence"] = "sequence"
+    diagram_type: Literal["sequence", "sequence_diagram"] = "sequence"
     autonumber: bool = True
     participants: list[SequenceParticipant] = Field(min_length=1, max_length=30)
     messages: list[SequenceMessage] = Field(default_factory=list, max_length=100)
@@ -193,7 +193,7 @@ class ERRelationship(BaseModel):
 class ERGraph(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    diagram_type: Literal["er"] = "er"
+    diagram_type: Literal["er", "er_diagram", "erd"] = "er"
     entities: list[EREntity] = Field(min_length=1, max_length=50)
     relationships: list[ERRelationship] = Field(default_factory=list, max_length=100)
 
@@ -242,7 +242,7 @@ class ClassRelationship(BaseModel):
 class ClassDiagramGraph(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    diagram_type: Literal["class"] = "class"
+    diagram_type: Literal["class", "class_diagram", "uml"] = "class"
     classes: list[ClassNode] = Field(min_length=1, max_length=50)
     relationships: list[ClassRelationship] = Field(default_factory=list, max_length=100)
 
@@ -263,8 +263,18 @@ class ClassDiagramGraph(BaseModel):
 
 def _get_diagram_discriminator(v: object) -> str:
     if isinstance(v, dict):
-        return v.get("diagram_type", "flowchart")
-    return getattr(v, "diagram_type", "flowchart")
+        dtype = v.get("diagram_type", "flowchart")
+    else:
+        dtype = getattr(v, "diagram_type", "flowchart")
+    if dtype in ("architecture", "flowchart"):
+        return "flowchart"
+    if dtype in ("sequence", "sequence_diagram"):
+        return "sequence"
+    if dtype in ("er", "er_diagram", "erd"):
+        return "er"
+    if dtype in ("class", "class_diagram", "uml"):
+        return "class"
+    return dtype
 
 
 AnyDiagramGraph = Annotated[
