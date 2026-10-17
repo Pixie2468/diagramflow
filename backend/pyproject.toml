@@ -23,3 +23,7 @@ backend = "backend.__main__:main"
 [build-system]
 requires = ["uv_build>=0.12.19,<0.13.0"]
 build-backend = "uv_build"
+
+[tool.fastapi]
+entrypoint = "main:app"
+
